@@ -14,7 +14,7 @@ from google.genai import types
 
 
 # ==================================================
-# STREAMLIT CONFIG
+# PAGE CONFIGURATION
 # ==================================================
 
 st.set_page_config(
@@ -25,7 +25,7 @@ st.set_page_config(
 
 
 # ==================================================
-# LOAD ENVIRONMENT
+# LOAD ENVIRONMENT VARIABLES
 # ==================================================
 
 load_dotenv()
@@ -36,14 +36,7 @@ if not api_key:
     st.error("❌ GEMINI_API_KEY not found in .env file")
     st.stop()
 
-
-# ==================================================
-# GEMINI
-# ==================================================
-
-client = genai.Client(
-    api_key=api_key
-)
+client = genai.Client(api_key=api_key)
 
 MODEL_NAME = "gemini-3.1-flash-lite"
 
@@ -57,7 +50,7 @@ REGISTRY_PATH = "./document_registry.json"
 
 
 # ==================================================
-# PAGE
+# PAGE TITLE
 # ==================================================
 
 st.title("📚 Document Q&A — RAG System")
@@ -83,17 +76,6 @@ def get_embeddings():
             "normalize_embeddings": True
         }
     )
-
-
-# ==================================================
-# FILE HASH
-# ==================================================
-
-def get_file_hash(file_bytes):
-
-    return hashlib.sha256(
-        file_bytes
-    ).hexdigest()
 
 
 # ==================================================
@@ -136,14 +118,11 @@ def save_registry(registry):
 
 
 # ==================================================
-# PDF → CHUNKS
+# PDF PROCESSING
 # ==================================================
 
 @st.cache_data(show_spinner=False)
-def process_pdf(
-    file_bytes,
-    filename
-):
+def process_pdf(file_bytes, filename):
 
     reader = PdfReader(
         io.BytesIO(file_bytes)
@@ -171,9 +150,7 @@ def process_pdf(
 
         pages_with_text += 1
 
-        page_chunks = splitter.split_text(
-            text
-        )
+        page_chunks = splitter.split_text(text)
 
         for chunk in page_chunks:
 
@@ -195,7 +172,7 @@ def process_pdf(
 
 
 # ==================================================
-# PERSISTENT CHROMA DATABASE
+# CHROMA VECTOR DATABASE
 # ==================================================
 
 @st.cache_resource
@@ -213,7 +190,7 @@ def get_vector_store():
 
 
 # ==================================================
-# SIDEBAR
+# SIDEBAR SETTINGS
 # ==================================================
 
 with st.sidebar:
@@ -225,7 +202,10 @@ with st.sidebar:
         min_value=2,
         max_value=8,
         value=4,
-        help="More chunks = more context but slower / noisier answers."
+        help=(
+            "More chunks = more context but "
+            "slower / noisier answers."
+        )
     )
 
     show_timings = st.checkbox(
@@ -233,29 +213,31 @@ with st.sidebar:
         value=True
     )
 
-    if st.button("🗑️ Clear all documents & chat"):
+    st.divider()
 
-        # Remove Chroma database
+    if st.button(
+        "🗑️ Clear all documents & chat"
+    ):
+
         if os.path.exists(CHROMA_PATH):
 
             try:
                 shutil.rmtree(CHROMA_PATH)
+
             except Exception:
                 pass
 
-        # Remove registry
         if os.path.exists(REGISTRY_PATH):
 
             try:
                 os.remove(REGISTRY_PATH)
+
             except Exception:
                 pass
 
-        # Clear Streamlit caches
         st.cache_resource.clear()
         st.cache_data.clear()
 
-        # Clear session state
         st.session_state.pop(
             "chat_history",
             None
@@ -292,11 +274,12 @@ uploaded_files = st.file_uploader(
 
 if uploaded_files:
 
-    new_files = []
+    all_new_chunks = []
+    all_new_metadatas = []
 
-    # ----------------------------------------------
-    # CHECK WHICH FILES ARE ALREADY INDEXED
-    # ----------------------------------------------
+    successful_files = []
+
+    new_files = []
 
     for uploaded_file in uploaded_files:
 
@@ -304,136 +287,111 @@ if uploaded_files:
 
         filename = uploaded_file.name
 
-        file_hash = get_file_hash(
+        file_hash = hashlib.sha256(
             file_bytes
+        ).hexdigest()
+
+        # ------------------------------------------
+        # Check if document already exists
+        # ------------------------------------------
+
+        if file_hash in registry:
+
+            continue
+
+        new_files.append(
+            (
+                filename,
+                file_bytes,
+                file_hash
+            )
         )
 
-        if file_hash not in registry:
-
-            new_files.append(
-                (
-                    filename,
-                    file_bytes,
-                    file_hash
-                )
-            )
-
-
-    # ==================================================
-    # NEW FILES FOUND
-    # ==================================================
+    # ------------------------------------------
+    # Process new documents
+    # ------------------------------------------
 
     if new_files:
 
-        all_new_chunks = []
-        all_new_metadatas = []
-        successful_files = []
+        with st.spinner(
+            "📖 Processing uploaded documents..."
+        ):
 
-        warnings = []
-
-        extract_start = time.time()
-
-
-        # ----------------------------------------------
-        # EXTRACT + CHUNK ONLY NEW FILES
-        # ----------------------------------------------
-
-        for filename, file_bytes, file_hash in new_files:
-
-            chunks, metadatas, pages_with_text, total_pages = process_pdf(
+            for (
+                filename,
                 file_bytes,
-                filename
-            )
+                file_hash
+            ) in new_files:
 
+                try:
 
-            if pages_with_text == 0:
+                    (
+                        chunks,
+                        metadatas,
+                        pages_with_text,
+                        total_pages
+                    ) = process_pdf(
+                        file_bytes,
+                        filename
+                    )
 
-                warnings.append(
-                    f"⚠️ No extractable text found in "
-                    f"**{filename}** ({total_pages} pages). "
-                    f"It may be a scanned/image-only PDF."
-                )
+                    if not chunks:
 
-                continue
+                        st.warning(
+                            f"⚠️ No readable text found "
+                            f"in {filename}"
+                        )
 
+                        continue
 
-            if pages_with_text < total_pages:
+                    all_new_chunks.extend(
+                        chunks
+                    )
 
-                warnings.append(
-                    f"ℹ️ **{filename}**: only "
-                    f"{pages_with_text}/{total_pages} pages "
-                    f"had extractable text."
-                )
+                    all_new_metadatas.extend(
+                        metadatas
+                    )
 
+                    successful_files.append(
+                        (
+                            filename,
+                            file_hash,
+                            len(chunks)
+                        )
+                    )
 
-            all_new_chunks.extend(
-                chunks
-            )
+                except Exception as e:
 
-            all_new_metadatas.extend(
-                metadatas
-            )
+                    st.error(
+                        f"❌ Error processing "
+                        f"{filename}: {e}"
+                    )
 
-            successful_files.append(
-                (
-                    filename,
-                    file_hash,
-                    len(chunks)
-                )
-            )
-
-
-        extract_time = (
-            time.time()
-            - extract_start
-        )
-
-
-        # ----------------------------------------------
-        # SHOW WARNINGS
-        # ----------------------------------------------
-
-        for warning in warnings:
-
-            st.warning(
-                warning
-            )
-
-
-        # ==================================================
-        # EMBED ONLY NEW CHUNKS
-        # ==================================================
+        # ------------------------------------------
+        # Add chunks to Chroma
+        # ------------------------------------------
 
         if all_new_chunks:
 
             with st.spinner(
-                f"🔄 Creating embeddings for "
-                f"{len(all_new_chunks)} new chunks..."
+                "🧠 Creating document embeddings..."
             ):
-
-                embed_start = time.time()
 
                 vector_store = get_vector_store()
 
-
-                # ------------------------------------------
-                # UNIQUE CHUNK IDS
-                # ------------------------------------------
-
                 chunk_ids = []
+
+                base_id = int(
+                    time.time() * 1000000
+                )
 
                 for index in range(
                     len(all_new_chunks)
                 ):
 
                     chunk_ids.append(
-                        f"chunk_{int(time.time() * 1000000)}_{index}"
+                        f"chunk_{base_id}_{index}"
                     )
-
-
-                # ------------------------------------------
-                # ADD NEW CHUNKS
-                # ------------------------------------------
 
                 vector_store.add_texts(
                     texts=all_new_chunks,
@@ -441,78 +399,60 @@ if uploaded_files:
                     ids=chunk_ids
                 )
 
+            # --------------------------------------
+            # Update registry
+            # --------------------------------------
 
-                embed_time = (
-                    time.time()
-                    - embed_start
-                )
-
-
-            # ------------------------------------------
-            # SAVE ONLY SUCCESSFULLY INDEXED FILES
-            # ------------------------------------------
-
-            for filename, file_hash, chunk_count in successful_files:
+            for (
+                filename,
+                file_hash,
+                chunk_count
+            ) in successful_files:
 
                 registry[file_hash] = {
                     "filename": filename,
                     "chunks": chunk_count
                 }
 
-
             save_registry(
                 registry
             )
 
-
-            # ------------------------------------------
-            # SUCCESS
-            # ------------------------------------------
-
             st.success(
-                f"✅ Indexed {len(all_new_chunks)} new chunks "
-                f"from {len(successful_files)} new file(s). "
-                f"Total time: "
-                f"{extract_time + embed_time:.2f}s "
-                f"(extract {extract_time:.2f}s · "
-                f"embed {embed_time:.2f}s)"
+                f"✅ Indexed "
+                f"{len(successful_files)} "
+                f"new document(s)."
             )
-
-
-        elif warnings:
-
-            st.warning(
-                "⚠️ No new readable text was found."
-            )
-
-
-    # ==================================================
-    # NO NEW FILES
-    # ==================================================
 
     else:
 
-        st.success(
-            "⚡ All uploaded PDFs are already indexed. "
-            "No new embeddings were created."
-        )
+        if registry:
+
+            st.info(
+                "ℹ️ Uploaded documents are "
+                "already indexed."
+            )
 
 
 # ==================================================
-# INDEXED DOCUMENTS
+# SHOW INDEXED DOCUMENTS
 # ==================================================
 
-if registry:
+with st.sidebar:
 
-    st.sidebar.subheader(
-        "📚 Indexed Documents"
-    )
+    if registry:
 
-    for document in registry.values():
+        st.divider()
 
-        st.sidebar.write(
-            f"📄 {document['filename']}"
+        st.subheader(
+            "📚 Indexed Documents"
         )
+
+        for document_info in registry.values():
+
+            st.write(
+                f"📄 {document_info['filename']}"
+            )
 
 
 # ==================================================
@@ -524,7 +464,15 @@ if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 
-for past_question, past_answer, past_sources in st.session_state.chat_history:
+# ==================================================
+# DISPLAY PREVIOUS CHAT
+# ==================================================
+
+for (
+    past_question,
+    past_answer,
+    past_sources
+) in st.session_state.chat_history:
 
     with st.chat_message("user"):
 
@@ -534,7 +482,7 @@ for past_question, past_answer, past_sources in st.session_state.chat_history:
 
     with st.chat_message("assistant"):
 
-        st.write(
+        st.markdown(
             past_answer
         )
 
@@ -548,7 +496,7 @@ for past_question, past_answer, past_sources in st.session_state.chat_history:
 
 
 # ==================================================
-# QUESTION
+# QUESTION INPUT
 # ==================================================
 
 question = st.chat_input(
@@ -557,13 +505,13 @@ question = st.chat_input(
 
 
 # ==================================================
-# RAG PIPELINE
+# QUESTION PROCESSING
 # ==================================================
 
 if question:
 
     # ----------------------------------------------
-    # CHECK DOCUMENTS
+    # Make sure a document exists
     # ----------------------------------------------
 
     if not registry:
@@ -574,6 +522,9 @@ if question:
 
         st.stop()
 
+    # ----------------------------------------------
+    # Display user question
+    # ----------------------------------------------
 
     with st.chat_message("user"):
 
@@ -581,24 +532,61 @@ if question:
             question
         )
 
-
     # ----------------------------------------------
-    # VECTOR STORE
+    # Load vector database
     # ----------------------------------------------
 
     vector_store = get_vector_store()
 
-
     # ==================================================
-    # RETRIEVAL
+    # DOCUMENT-AWARE RETRIEVAL
     # ==================================================
 
     search_start = time.time()
 
-    results = vector_store.similarity_search(
-        question,
-        k=top_k
-    )
+    all_results = []
+
+    # Retrieve chunks separately from EACH PDF
+    for document_info in registry.values():
+
+        filename = document_info["filename"]
+
+        try:
+
+            document_results = (
+                vector_store.similarity_search(
+                    question,
+                    k=top_k,
+                    filter={
+                        "source": filename
+                    }
+                )
+            )
+
+            all_results.extend(
+                document_results
+            )
+
+        except Exception:
+
+            # If filtering fails for any reason,
+            # continue with the other documents.
+            continue
+
+    # ----------------------------------------------
+    # Fallback to global search
+    # ----------------------------------------------
+
+    if not all_results:
+
+        all_results = (
+            vector_store.similarity_search(
+                question,
+                k=top_k
+            )
+        )
+
+    results = all_results
 
     search_time = (
         time.time()
@@ -607,21 +595,21 @@ if question:
 
 
     # ==================================================
-    # CONTEXT
+    # BUILD CONTEXT
     # ==================================================
 
     context = "\n\n".join(
-
-        f"[Source: {document.metadata.get('source', 'Unknown')}, "
-        f"Page {document.metadata.get('page', '?')}]\n"
+        f"[Source: "
+        f"{document.metadata.get('source', 'Unknown')}, "
+        f"Page "
+        f"{document.metadata.get('page', '?')}]\n"
         f"{document.page_content}"
-
         for document in results
     )
 
 
     # ==================================================
-    # CHAT HISTORY
+    # PREVIOUS CONVERSATION
     # ==================================================
 
     history_text = ""
@@ -633,15 +621,13 @@ if question:
         )
 
         history_text = "\n".join(
-
             f"Q: {q}\nA: {a}"
-
             for q, a, _ in recent
         )
 
 
     # ==================================================
-    # PROMPT
+    # GEMINI PROMPT
     # ==================================================
 
     prompt = f"""
@@ -655,7 +641,8 @@ I couldn't find the answer in the document.
 
 Answer concisely and directly.
 
-When useful, mention the source and page where the information came from.
+When useful, mention the source and page
+where the information came from.
 
 PREVIOUS CONVERSATION:
 {history_text or "(none)"}
@@ -669,11 +656,10 @@ QUESTION:
 
 
     # ==================================================
-    # GEMINI STREAMING
+    # GEMINI RESPONSE
     # ==================================================
 
     gemini_start = time.time()
-
 
     with st.chat_message("assistant"):
 
@@ -681,25 +667,22 @@ QUESTION:
 
         full_answer = ""
 
-
         try:
 
-            stream = client.models.generate_content_stream(
-
-                model=MODEL_NAME,
-
-                contents=prompt,
-
-                config=types.GenerateContentConfig(
-
-                    thinking_config=types.ThinkingConfig(
-                        thinking_level="minimal"
-                    ),
-
-                    max_output_tokens=300
+            stream = (
+                client.models.generate_content_stream(
+                    model=MODEL_NAME,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        thinking_config=(
+                            types.ThinkingConfig(
+                                thinking_level="minimal"
+                            )
+                        ),
+                        max_output_tokens=300
+                    )
                 )
             )
-
 
             for chunk in stream:
 
@@ -711,11 +694,10 @@ QUESTION:
                         full_answer + "▌"
                     )
 
-
             answer_placeholder.markdown(
-                full_answer or "_(empty response)_"
+                full_answer
+                or "_(empty response)_"
             )
-
 
         except Exception as e:
 
@@ -725,74 +707,75 @@ QUESTION:
 
             st.stop()
 
-
         gemini_time = (
             time.time()
             - gemini_start
         )
 
 
-        # ==================================================
-        # SOURCES
-        # ==================================================
+    # ==================================================
+    # SOURCE INFORMATION
+    # ==================================================
 
-        seen_sources = set()
+    seen_sources = set()
 
-        source_labels = []
+    source_labels = []
 
+    for document in results:
 
-        for document in results:
+        source = document.metadata.get(
+            "source",
+            "Unknown"
+        )
 
-            source = document.metadata.get(
-                "source",
-                "Unknown"
+        page = document.metadata.get(
+            "page",
+            "Unknown"
+        )
+
+        source_key = (
+            source,
+            page
+        )
+
+        if source_key not in seen_sources:
+
+            seen_sources.add(
+                source_key
             )
 
-            page = document.metadata.get(
-                "page",
-                "Unknown"
-            )
-
-            source_key = (
-                source,
-                page
-            )
-
-
-            if source_key not in seen_sources:
-
-                seen_sources.add(
-                    source_key
-                )
-
-                source_labels.append(
-                    f"📄 {source} — p.{page}"
-                )
-
-
-        if source_labels:
-
-            st.caption(
-                " · ".join(
-                    source_labels
-                )
-            )
-
-
-        # ==================================================
-        # TIMING
-        # ==================================================
-
-        if show_timings:
-
-            st.caption(
-                f"⏱️ search {search_time:.2f}s · "
-                f"generation {gemini_time:.2f}s"
+            source_labels.append(
+                f"📄 {source} — p.{page}"
             )
 
 
     # ==================================================
-    # SAVE CHAT
+    # DISPLAY SOURCES
+    # ==================================================
+
+    if source_labels:
+
+        st.caption(
+            " · ".join(
+                source_labels
+            )
+        )
+
+
+    # ==================================================
+    # TIMING INFORMATION
+    # ==================================================
+
+    if show_timings:
+
+        st.caption(
+            f"⏱️ search {search_time:.2f}s · "
+            f"generation {gemini_time:.2f}s"
+        )
+
+
+    # ==================================================
+    # SAVE CHAT HISTORY
     # ==================================================
 
     st.session_state.chat_history.append(
