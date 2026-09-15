@@ -6,3 +6,4 @@ chroma_db/
 api_data/
 data/document_registry.json
 data/
+document_registry.json
