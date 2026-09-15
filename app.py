@@ -13,9 +13,9 @@ from google import genai
 from google.genai import types
 
 
-# ==================================================
+# ============================================================
 # PAGE CONFIGURATION
-# ==================================================
+# ============================================================
 
 st.set_page_config(
     page_title="Document Q&A",
@@ -24,9 +24,9 @@ st.set_page_config(
 )
 
 
-# ==================================================
+# ============================================================
 # LOAD ENVIRONMENT VARIABLES
-# ==================================================
+# ============================================================
 
 load_dotenv()
 
@@ -36,22 +36,27 @@ if not api_key:
     st.error("❌ GEMINI_API_KEY not found in .env file")
     st.stop()
 
+
+# ============================================================
+# GEMINI CLIENT
+# ============================================================
+
 client = genai.Client(api_key=api_key)
 
 MODEL_NAME = "gemini-3.1-flash-lite"
 
 
-# ==================================================
-# STORAGE PATHS
-# ==================================================
+# ============================================================
+# STORAGE
+# ============================================================
 
 CHROMA_PATH = "./chroma_db"
 REGISTRY_PATH = "./document_registry.json"
 
 
-# ==================================================
-# PAGE TITLE
-# ==================================================
+# ============================================================
+# TITLE
+# ============================================================
 
 st.title("📚 Document Q&A — RAG System")
 
@@ -60,9 +65,9 @@ st.write(
 )
 
 
-# ==================================================
+# ============================================================
 # EMBEDDINGS
-# ==================================================
+# ============================================================
 
 @st.cache_resource
 def get_embeddings():
@@ -78,9 +83,9 @@ def get_embeddings():
     )
 
 
-# ==================================================
+# ============================================================
 # DOCUMENT REGISTRY
-# ==================================================
+# ============================================================
 
 def load_registry():
 
@@ -117,9 +122,9 @@ def save_registry(registry):
         )
 
 
-# ==================================================
+# ============================================================
 # PDF PROCESSING
-# ==================================================
+# ============================================================
 
 @st.cache_data(show_spinner=False)
 def process_pdf(file_bytes, filename):
@@ -171,9 +176,9 @@ def process_pdf(file_bytes, filename):
     )
 
 
-# ==================================================
+# ============================================================
 # CHROMA VECTOR DATABASE
-# ==================================================
+# ============================================================
 
 @st.cache_resource
 def get_vector_store():
@@ -189,9 +194,9 @@ def get_vector_store():
     )
 
 
-# ==================================================
-# SIDEBAR SETTINGS
-# ==================================================
+# ============================================================
+# SIDEBAR
+# ============================================================
 
 with st.sidebar:
 
@@ -203,8 +208,8 @@ with st.sidebar:
         max_value=8,
         value=4,
         help=(
-            "More chunks = more context but "
-            "slower / noisier answers."
+            "Number of the most relevant chunks "
+            "retrieved from all documents."
         )
     )
 
@@ -213,7 +218,20 @@ with st.sidebar:
         value=True
     )
 
+    show_retrieved_chunks = st.checkbox(
+        "Show retrieved chunks",
+        value=False,
+        help=(
+            "Useful for checking what information "
+            "the RAG system retrieved."
+        )
+    )
+
     st.divider()
+
+    # --------------------------------------------------------
+    # CLEAR DATABASE
+    # --------------------------------------------------------
 
     if st.button(
         "🗑️ Clear all documents & chat"
@@ -250,16 +268,16 @@ with st.sidebar:
         st.rerun()
 
 
-# ==================================================
-# LOAD DOCUMENT REGISTRY
-# ==================================================
+# ============================================================
+# LOAD REGISTRY
+# ============================================================
 
 registry = load_registry()
 
 
-# ==================================================
-# PDF UPLOAD
-# ==================================================
+# ============================================================
+# FILE UPLOADER
+# ============================================================
 
 uploaded_files = st.file_uploader(
     "📄 Upload PDF(s)",
@@ -268,9 +286,9 @@ uploaded_files = st.file_uploader(
 )
 
 
-# ==================================================
-# PROCESS UPLOADED FILES
-# ==================================================
+# ============================================================
+# INDEX DOCUMENTS
+# ============================================================
 
 if uploaded_files:
 
@@ -278,8 +296,11 @@ if uploaded_files:
     all_new_metadatas = []
 
     successful_files = []
-
     new_files = []
+
+    # --------------------------------------------------------
+    # FIND NEW FILES
+    # --------------------------------------------------------
 
     for uploaded_file in uploaded_files:
 
@@ -290,10 +311,6 @@ if uploaded_files:
         file_hash = hashlib.sha256(
             file_bytes
         ).hexdigest()
-
-        # ------------------------------------------
-        # Check if document already exists
-        # ------------------------------------------
 
         if file_hash in registry:
 
@@ -307,9 +324,10 @@ if uploaded_files:
             )
         )
 
-    # ------------------------------------------
-    # Process new documents
-    # ------------------------------------------
+
+    # --------------------------------------------------------
+    # PROCESS NEW FILES
+    # --------------------------------------------------------
 
     if new_files:
 
@@ -338,8 +356,8 @@ if uploaded_files:
                     if not chunks:
 
                         st.warning(
-                            f"⚠️ No readable text found "
-                            f"in {filename}"
+                            f"⚠️ No readable text found in "
+                            f"{filename}"
                         )
 
                         continue
@@ -367,9 +385,10 @@ if uploaded_files:
                         f"{filename}: {e}"
                     )
 
-        # ------------------------------------------
-        # Add chunks to Chroma
-        # ------------------------------------------
+
+        # ----------------------------------------------------
+        # CREATE EMBEDDINGS
+        # ----------------------------------------------------
 
         if all_new_chunks:
 
@@ -393,15 +412,17 @@ if uploaded_files:
                         f"chunk_{base_id}_{index}"
                     )
 
+
                 vector_store.add_texts(
                     texts=all_new_chunks,
                     metadatas=all_new_metadatas,
                     ids=chunk_ids
                 )
 
-            # --------------------------------------
-            # Update registry
-            # --------------------------------------
+
+            # ------------------------------------------------
+            # SAVE REGISTRY
+            # ------------------------------------------------
 
             for (
                 filename,
@@ -414,9 +435,11 @@ if uploaded_files:
                     "chunks": chunk_count
                 }
 
+
             save_registry(
                 registry
             )
+
 
             st.success(
                 f"✅ Indexed "
@@ -424,19 +447,19 @@ if uploaded_files:
                 f"new document(s)."
             )
 
+
     else:
 
         if registry:
 
             st.info(
-                "ℹ️ Uploaded documents are "
-                "already indexed."
+                "ℹ️ Uploaded documents are already indexed."
             )
 
 
-# ==================================================
+# ============================================================
 # SHOW INDEXED DOCUMENTS
-# ==================================================
+# ============================================================
 
 with st.sidebar:
 
@@ -455,18 +478,18 @@ with st.sidebar:
             )
 
 
-# ==================================================
+# ============================================================
 # CHAT HISTORY
-# ==================================================
+# ============================================================
 
 if "chat_history" not in st.session_state:
 
     st.session_state.chat_history = []
 
 
-# ==================================================
-# DISPLAY PREVIOUS CHAT
-# ==================================================
+# ============================================================
+# DISPLAY CHAT HISTORY
+# ============================================================
 
 for (
     past_question,
@@ -495,24 +518,24 @@ for (
             )
 
 
-# ==================================================
+# ============================================================
 # QUESTION INPUT
-# ==================================================
+# ============================================================
 
 question = st.chat_input(
     "Ask a question about your document(s)..."
 )
 
 
-# ==================================================
-# QUESTION PROCESSING
-# ==================================================
+# ============================================================
+# RAG PIPELINE
+# ============================================================
 
 if question:
 
-    # ----------------------------------------------
-    # Make sure a document exists
-    # ----------------------------------------------
+    # --------------------------------------------------------
+    # CHECK DOCUMENTS
+    # --------------------------------------------------------
 
     if not registry:
 
@@ -522,9 +545,10 @@ if question:
 
         st.stop()
 
-    # ----------------------------------------------
-    # Display user question
-    # ----------------------------------------------
+
+    # --------------------------------------------------------
+    # DISPLAY QUESTION
+    # --------------------------------------------------------
 
     with st.chat_message("user"):
 
@@ -532,85 +556,124 @@ if question:
             question
         )
 
-    # ----------------------------------------------
-    # Load vector database
-    # ----------------------------------------------
+
+    # --------------------------------------------------------
+    # LOAD VECTOR STORE
+    # --------------------------------------------------------
 
     vector_store = get_vector_store()
 
-    # ==================================================
-    # DOCUMENT-AWARE RETRIEVAL
-    # ==================================================
+
+    # ========================================================
+    # STEP 1 — RETRIEVAL
+    # ========================================================
 
     search_start = time.time()
 
-    all_results = []
+    # Search ALL indexed document chunks together.
+    #
+    # This is important.
+    #
+    # We do NOT search each PDF separately.
+    #
+    # Chroma ranks the chunks globally according to
+    # their semantic similarity to the question.
 
-    # Retrieve chunks separately from EACH PDF
-    for document_info in registry.values():
-
-        filename = document_info["filename"]
-
-        try:
-
-            document_results = (
-                vector_store.similarity_search(
-                    question,
-                    k=top_k,
-                    filter={
-                        "source": filename
-                    }
-                )
-            )
-
-            all_results.extend(
-                document_results
-            )
-
-        except Exception:
-
-            # If filtering fails for any reason,
-            # continue with the other documents.
-            continue
-
-    # ----------------------------------------------
-    # Fallback to global search
-    # ----------------------------------------------
-
-    if not all_results:
-
-        all_results = (
-            vector_store.similarity_search(
-                question,
-                k=top_k
-            )
-        )
-
-    results = all_results
+    results = vector_store.similarity_search(
+        question,
+        k=top_k
+    )
 
     search_time = (
-        time.time()
-        - search_start
+        time.time() - search_start
     )
 
 
-    # ==================================================
-    # BUILD CONTEXT
-    # ==================================================
+    # ========================================================
+    # DEBUG — SHOW RETRIEVED CHUNKS
+    # ========================================================
+
+    if show_retrieved_chunks:
+
+        with st.expander(
+            "🔍 Retrieved chunks"
+        ):
+
+            if results:
+
+                for (
+                    index,
+                    document
+                ) in enumerate(
+                    results,
+                    start=1
+                ):
+
+                    source = document.metadata.get(
+                        "source",
+                        "Unknown"
+                    )
+
+                    page = document.metadata.get(
+                        "page",
+                        "Unknown"
+                    )
+
+                    st.markdown(
+                        f"### Chunk {index}"
+                    )
+
+                    st.caption(
+                        f"📄 {source} — p.{page}"
+                    )
+
+                    st.write(
+                        document.page_content
+                    )
+
+                    st.divider()
+
+            else:
+
+                st.write(
+                    "No chunks were retrieved."
+                )
+
+
+    # ========================================================
+    # STEP 2 — BUILD CONTEXT
+    # ========================================================
+
+    context_parts = []
+
+    for document in results:
+
+        source = document.metadata.get(
+            "source",
+            "Unknown"
+        )
+
+        page = document.metadata.get(
+            "page",
+            "?"
+        )
+
+        content = document.page_content
+
+        context_parts.append(
+            f"[Source: {source}, Page {page}]\n"
+            f"{content}"
+        )
+
 
     context = "\n\n".join(
-        f"[Source: "
-        f"{document.metadata.get('source', 'Unknown')}, "
-        f"Page "
-        f"{document.metadata.get('page', '?')}]\n"
-        f"{document.page_content}"
-        for document in results
+        context_parts
     )
 
 
-    # ==================================================
-    # PREVIOUS CONVERSATION
-    # ==================================================
+    # ========================================================
+    # STEP 3 — CONVERSATION HISTORY
+    # ========================================================
 
     history_text = ""
 
@@ -626,38 +689,55 @@ if question:
         )
 
 
-    # ==================================================
-    # GEMINI PROMPT
-    # ==================================================
+    # ========================================================
+    # STEP 4 — RAG PROMPT
+    # ========================================================
 
     prompt = f"""
 You are a document question-answering assistant.
 
-Use ONLY the information provided in the context below.
+Your job is to answer the user's question using the
+retrieved document context.
 
-If the answer is not present in the context, say exactly:
+IMPORTANT RULES:
+
+1. Use the retrieved document context as the factual
+   source for your answer.
+
+2. Do NOT invent information.
+
+3. Do NOT use general world knowledge if the answer
+   cannot be found in the retrieved context.
+
+4. If the answer is clearly present in the retrieved
+   context, answer it directly.
+
+5. If the answer is not present in the retrieved context,
+   say exactly:
 
 I couldn't find the answer in the document.
 
-Answer concisely and directly.
+6. When possible, mention the document name and page
+   number containing the answer.
 
-When useful, mention the source and page
-where the information came from.
+7. Previous conversation is ONLY for understanding
+   follow-up questions. It is NOT evidence for factual
+   answers.
 
 PREVIOUS CONVERSATION:
 {history_text or "(none)"}
 
-CONTEXT:
-{context}
+RETRIEVED DOCUMENT CONTEXT:
+{context or "(no relevant context retrieved)"}
 
-QUESTION:
+USER QUESTION:
 {question}
 """
 
 
-    # ==================================================
-    # GEMINI RESPONSE
-    # ==================================================
+    # ========================================================
+    # STEP 5 — GEMINI GENERATION
+    # ========================================================
 
     gemini_start = time.time()
 
@@ -674,15 +754,18 @@ QUESTION:
                     model=MODEL_NAME,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        thinking_config=(
-                            types.ThinkingConfig(
-                                thinking_level="minimal"
-                            )
+                        thinking_config=types.ThinkingConfig(
+                            thinking_level="minimal"
                         ),
                         max_output_tokens=300
                     )
                 )
             )
+
+
+            # ------------------------------------------------
+            # STREAM ANSWER
+            # ------------------------------------------------
 
             for chunk in stream:
 
@@ -694,10 +777,11 @@ QUESTION:
                         full_answer + "▌"
                     )
 
+
             answer_placeholder.markdown(
-                full_answer
-                or "_(empty response)_"
+                full_answer or "_(empty response)_"
             )
+
 
         except Exception as e:
 
@@ -707,19 +791,20 @@ QUESTION:
 
             st.stop()
 
+
         gemini_time = (
-            time.time()
-            - gemini_start
+            time.time() - gemini_start
         )
 
 
-    # ==================================================
-    # SOURCE INFORMATION
-    # ==================================================
+    # ========================================================
+    # STEP 6 — SOURCE INFORMATION
+    # ========================================================
 
     seen_sources = set()
 
     source_labels = []
+
 
     for document in results:
 
@@ -738,6 +823,7 @@ QUESTION:
             page
         )
 
+
         if source_key not in seen_sources:
 
             seen_sources.add(
@@ -749,9 +835,9 @@ QUESTION:
             )
 
 
-    # ==================================================
+    # ========================================================
     # DISPLAY SOURCES
-    # ==================================================
+    # ========================================================
 
     if source_labels:
 
@@ -762,9 +848,9 @@ QUESTION:
         )
 
 
-    # ==================================================
-    # TIMING INFORMATION
-    # ==================================================
+    # ========================================================
+    # DISPLAY TIMINGS
+    # ========================================================
 
     if show_timings:
 
@@ -774,9 +860,9 @@ QUESTION:
         )
 
 
-    # ==================================================
-    # SAVE CHAT HISTORY
-    # ==================================================
+    # ========================================================
+    # SAVE CHAT
+    # ========================================================
 
     st.session_state.chat_history.append(
         (
@@ -785,3 +871,4 @@ QUESTION:
             source_labels
         )
     )
+
